@@ -77,7 +77,7 @@ def train(epoch,net,net2,optimizer,labeled_trainloader,unlabeled_trainloader):
             outputs_x2 = net(inputs_x2)            
             
             px = (torch.softmax(outputs_x, dim=1) + torch.softmax(outputs_x2, dim=1)) / 2
-            px = w_x*labels_x + (1-w_x)*px              
+            px = w_x*labels_x + (1-w_x)*px # if the probability of a correct label is high, then trust the label, otherwise trust the ensemble prediction
             ptx = px**(1/args.T) # temparature sharpening 
                        
             targets_x = ptx / ptx.sum(dim=1, keepdim=True) # normalize           
@@ -99,7 +99,7 @@ def train(epoch,net,net2,optimizer,labeled_trainloader,unlabeled_trainloader):
         mixed_target = l * target_a + (1 - l) * target_b
                 
         logits = net(mixed_input)
-        logits_x = logits[:batch_size*2]
+        logits_x = logits[:batch_size*2] # why only batchsize*2?
         logits_u = logits[batch_size*2:]        
            
         Lx, Lu, lamb = criterion(logits_x, mixed_target[:batch_size*2], logits_u, mixed_target[batch_size*2:], epoch+batch_idx/num_iter, warm_up)
@@ -258,16 +258,18 @@ for epoch in range(args.num_epochs+1):
         warmup(epoch,net2,optimizer2,warmup_trainloader) 
    
     else:         
-        prob1,all_loss[0]=eval_train(net1,all_loss[0])   
-        prob2,all_loss[1]=eval_train(net2,all_loss[1])          
+        prob1,all_loss[0] = eval_train(net1, all_loss[0])   
+        prob2,all_loss[1] = eval_train(net2, all_loss[1])          
                
         pred1 = (prob1 > args.p_threshold)      
         pred2 = (prob2 > args.p_threshold)      
         
+        # use net2 to divide the data (labeled&unlabeled), use net1 to perform semi-supervised learning
         print('Train Net1')
         labeled_trainloader, unlabeled_trainloader = loader.run('train',pred2,prob2) # co-divide
         train(epoch,net1,net2,optimizer1,labeled_trainloader, unlabeled_trainloader) # train net1  
         
+        # use net1 to divide the data (labeled&unlabeled), use net2 to perform semi-supervised learning
         print('\nTrain Net2')
         labeled_trainloader, unlabeled_trainloader = loader.run('train',pred1,prob1) # co-divide
         train(epoch,net2,net1,optimizer2,labeled_trainloader, unlabeled_trainloader) # train net2         
