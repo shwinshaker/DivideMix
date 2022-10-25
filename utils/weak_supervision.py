@@ -4,7 +4,7 @@ import json
 import os
 import numpy as np
 import torch
-from ..utils import print
+from .logger import print
 
 __all__ = ['get_weak_supervision']
 
@@ -27,7 +27,7 @@ def get_weak_supervision(trainids, data_dir, dataset, seed_file_name="seedwords.
     pseudo_label_path = os.path.join(data_path, "pseudo_weak.pt")
     if os.path.exists(pseudo_label_path):
         tar = torch.load(pseudo_label_path)
-        print_pseudo_label_info(tar, train_size=len(trainids))
+        # print_pseudo_label_info(tar, train_size=len(trainids))
         return tar
     
     print('=====> Load raw text..')

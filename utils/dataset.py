@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import pickle
 from transformers import BertTokenizer
-from ..utils import print
+from .logger import print
 
 
 def get_dataset(dataset, data_dir='/home/chengyu/bert_classification/data', config=None):

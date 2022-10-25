@@ -8,7 +8,7 @@ import os
 
 from collections import Counter
 from collections.abc import Iterable
-from ..utils import print, save_array
+from .logger import print # , save_array
 import warnings
 
 def find_indices(b, a):
