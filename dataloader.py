@@ -1,139 +1,103 @@
 from torch.utils.data import Dataset, DataLoader
-import torchvision.transforms as transforms
-import random
+# import torchvision.transforms as transforms
+# import random
 import numpy as np
-from PIL import Image
-import json
+# from PIL import Image
 import os
 import torch
+# import json
 from torchnet.meter import AUCMeter
 
-from .tools import EncodingDataset
+from utils.dataset import get_dataset
+from utils.weak_supervision import get_weak_supervision
+from utils.tools import EncodingDataset
+from utils.perturbation import SeedWordPerturbator
             
-def unpickle(file):
-    import _pickle as cPickle
-    with open(file, 'rb') as fo:
-        dict = cPickle.load(fo, encoding='latin1')
-    return dict
 
-class EncodingArr:
+# class EncodingInput:
+#     def __init__(self, dic):
+#         self.dic = dic
+#         self.key0 = list(dic.keys())[0]
+
+#     def cuda(self):
+#         return {key: val.cuda() for key, val in self.dic.items()}
+
+#     def size(self):
+#         return self.dic[self.key0].size()
+
+#     def __getitem__(self, index):
+#         return EncodingInput({key: val[index] for key, val in self.encodings.items()})
+
+#     def __len__(self):
+#         return self.dic[self.key0].size(0)
+
+
+# class EncodingArr:
+class DictOfTensor:
     @classmethod
     def cat(cls, arr1, arr2):
         return #TODO
 
-    def __init__(self, encodings):
-        self.encodings = encodings
+    def __init__(self, dic):
+        self.dic = dic
+        self.key0 = list(dic.keys())[0]
 
     def __getitem__(self, index):
-        return {key: val[index] for key, val in self.encodings.items()}
+        return DictOfTensor({key: val[index] for key, val in self.dic.items()})
 
     def __len__(self):
-        return len(self.encodings[list(self.encodings.keys())[0]])
+        return len(self.dic[self.key0])
+
+    def cuda(self):
+        return DictOfTensor({key: val.cuda() for key, val in self.dic.items()})
+
+    def size(self):
+        return self.dic[self.key0].size()
+
 
 class WeakSupDataset(Dataset): 
-    # def __init__(self, dataset, root_dir, mode
-                #  pred=[], probability=[], log=''): 
+    def __init__(self, mode, dataset, data_dir, pred=[], probability=[], config=None, log=None):
 
-    def set_transform(self, perturbator):
-        def _transform(inputs):
-            return perturbator.remove_random_words_batch(inputs, self.config.randremove_num)
-        self.transform = _transform
-
-    def __init__(self, mode, dataset, data_dir, pred=[], probability=[], config=None, log=None)
-        
-        # self.transform = transform
+        self.count = 0   
         self.mode = mode  
-        # self.transition = {0:0,2:0,4:7,7:7,1:1,9:1,3:5,5:3,6:6,8:8} # class transition for asymmetric noise
         self.config = config
      
         data_dict = get_dataset(dataset, data_dir=data_dir, config=config)
         self.decode = lambda inputs: data_dict['tokenizer'].decode(inputs['input_ids'])
         self.label_decode = lambda label: data_dict['label_names'][label]
         self.classes = data_dict['labels'].unique().tolist()
+        print(f'Num of classes: {len(self.classes)}')
         seed_word_perturbator = SeedWordPerturbator(data_dict['tokenizer'],
                                                     list(data_dict['label_names'].keys()),
                                                     data_dict['label_names'],
                                                     dataset=dataset,
                                                     data_dir=data_dir)
-        self.set_transform(seed_word_perturbator)
+        self.set_transform(seed_word_perturbator, to_random_noise=config.to_random_noise)
 
         if self.mode=='test':
-            inputs = EncodingArr(data_dict['encodings'])
-            labels = data_dict['labels']
-            # if dataset=='cifar10':                
-            #     test_dic = unpickle('%s/test_batch'%root_dir)
-            #     self.test_data = test_dic['data']
-            #     self.test_data = self.test_data.reshape((10000, 3, 32, 32))
-            #     self.test_data = self.test_data.transpose((0, 2, 3, 1))  
-            #     self.test_label = test_dic['labels']
-            # elif dataset=='cifar100':
-            #     test_dic = unpickle('%s/test'%root_dir)
-            #     self.test_data = test_dic['data']
-            #     self.test_data = self.test_data.reshape((10000, 3, 32, 32))
-            #     self.test_data = self.test_data.transpose((0, 2, 3, 1))  
-            #     self.test_label = test_dic['fine_labels']                            
+            self.inputs = DictOfTensor(data_dict['encodings'])
+            self.labels = data_dict['labels']
         else:    
-            inputs = EncodingArr(data_dict['encodings'])
-            labels = torch.empty(len(self.inputs), dtype=torch.int64)
-            # train_data=[]
-            # train_label=[]
-            # if dataset=='cifar10': 
-            #     for n in range(1,6):
-            #         dpath = '%s/data_batch_%d'%(root_dir,n)
-            #         data_dic = unpickle(dpath)
-            #         train_data.append(data_dic['data'])
-            #         train_label = train_label+data_dic['labels']
-            #     train_data = np.concatenate(train_data)
-            # elif dataset=='cifar100':    
-            #     train_dic = unpickle('%s/train'%root_dir)
-            #     train_data = train_dic['data']
-            #     train_label = train_dic['fine_labels']
-            # train_data = train_data.reshape((50000, 3, 32, 32))
-            # train_data = train_data.transpose((0, 2, 3, 1))
+            inputs = DictOfTensor(data_dict['encodings'])
+            labels = torch.empty(len(inputs), dtype=torch.int64)
 
             # load weak labels
             # trainsubids = np.array([], dtype=int)
-            tar = get_weak_supervision(np.arange(len(self.inputs)), data_dir, dataset)
+            tar = get_weak_supervision(np.arange(len(inputs)), data_dir, dataset)
             # save_array('id_train_weak_sup.npy',  tar['index'], config=config) # save all ids having weak labels for later selection of weak labels
-
-            # if hasattr(config, 'pseudo_weak_sup_select') and config.pseudo_weak_sup_select:
-            #     print('\n==> Select weak pseudo-labels based on confidence..')
-            #     tar_path = '%s/pseudo_unlabeled=%s.pt' % (config.weak_model_path, 'id_train_weak_sup')
-            #     tar = pseudo_label_selection(torch.load(tar_path), classes=trainset.classes,
-            #                                 threshold=config.pseudo_weak_sup_threshold,
-            #                                 threshold_type=config.pseudo_weak_sup_threshold_type,
-            #                                 class_balance=config.pseudo_weak_sup_class_balance,
-            #                                 save_dir=config.save_dir)
-
             # save_array('id_unlabeled.npy', np.setdiff1d(np.arange(len(trainset)), tar['index']), config=config)
 
-            # add_label(trainset, ids=tar['index'], labels=tar['pseudo_label'])
-            # trainsubids = add_trainsubids(trainsubids, tar['index'])
+            if self.mode == 'labeled':
+                # log the prediction of noisy or not
+                assert(np.all(tar['true_label'] == np.array([data_dict['labels'][i] for i in tar['index']])))
+                clean = (tar['pseudo_label'] == tar['true_label'])                                                       
+                auc_meter = AUCMeter()
+                auc_meter.reset()
+                auc_meter.add(probability, clean)        
+                auc, _, _ = auc_meter.value()               
+                log.write('Numer of labeled samples:%d   AUC:%.3f\n'%(pred.sum(),auc))
+                log.flush()     
 
-            # if os.path.exists(noise_file):
-            #     noise_label = json.load(open(noise_file,"r"))
-            # else:    #inject noise   
-            #     noise_label = []
-            #     idx = list(range(50000))
-            #     random.shuffle(idx)
-            #     num_noise = int(self.r*50000)            
-            #     noise_idx = idx[:num_noise]
-            #     for i in range(50000):
-            #         if i in noise_idx:
-            #             if noise_mode=='sym':
-            #                 if dataset=='cifar10': 
-            #                     noiselabel = random.randint(0,9)
-            #                 elif dataset=='cifar100':    
-            #                     noiselabel = random.randint(0,99)
-            #                 noise_label.append(noiselabel)
-            #             elif noise_mode=='asym':   
-            #                 noiselabel = self.transition[train_label[i]]
-            #                 noise_label.append(noiselabel)                    
-            #         else:    
-            #             noise_label.append(train_label[i])   
-            #     print("save noisy labels to %s ..."%noise_file)        
-            #     json.dump(noise_label,open(noise_file,"w"))       
-            
             weak_ids = tar['index']
             weak_labels = tar['pseudo_label']
             if self.mode == 'weak':
@@ -144,14 +108,6 @@ class WeakSupDataset(Dataset):
                     pred_idx = pred.nonzero()[0]
                     self.probability = [probability[i] for i in pred_idx]   
                     
-                    # clean = (np.array(noise_label)==np.array(train_label))                                                       
-                    # auc_meter = AUCMeter()
-                    # auc_meter.reset()
-                    # auc_meter.add(probability,clean)        
-                    # auc,_,_ = auc_meter.value()               
-                    # log.write('Numer of labeled samples:%d   AUC:%.3f\n'%(pred.sum(),auc))
-                    # log.flush()      
-
                     # - pred_idx must be indexing weak data (self.mode=weak), thus indexing weak_ids
                     # TODO: Assert something here to ensure this
                     self.inputs = inputs[weak_ids[pred_idx]]
@@ -164,19 +120,61 @@ class WeakSupDataset(Dataset):
                     # self.labels = [weak_labels[pred_idx]]
                     # - all other unlabeled data
                     _inputs.append(inputs[np.setdiff1d(np.arange(len(inputs)), weak_ids)])
-                    self.inputs = {k: torch.cat([e.encodings[k] for e in _inputs]) for k in inputs.encodings} 
+                    self.inputs = DictOfTensor({k: torch.cat([e.dic[k] for e in _inputs]) for k in inputs.dic})
                     # TODO: not sure if correct
                     # TODO: make it a class method
                 
                 # self.train_data = train_data[pred_idx]
                 # self.noise_label = [noise_label[i] for i in pred_idx]                          
                 # print("%s data has a size of %d"%(self.mode,len(self.noise_label)))            
-                
+
+    def set_transform(self, perturbator, to_random_noise=False):
+
+        if self.mode == 'labeled':
+            if to_random_noise:
+                def _transform(input_, label):
+                    input_ad, offset = perturbator.remove_seed_words(input_, label)
+                    assert(offset > 0), offset
+                    return perturbator.remove_random_words(input_ad, self.config.randremove_num)
+            else:
+                _transform = lambda input_, label: perturbator.remove_random_words(input_, self.config.randremove_num)
+        elif self.mode == 'unlabeled':
+            # no label available for unlabeled, cannot remove seed word
+            _transform = lambda input_: perturbator.remove_random_words(input_, self.config.randremove_num)
+        elif self.mode == 'weak':
+            if to_random_noise:
+                def _transform(input_, label):
+                    input_ad, offset = perturbator.remove_seed_words(input_, label)
+                    # assert(offset > 0), offset
+                    if not offset > 0:
+                        self.count += 1
+                        print('[%i] %i' % (self.count, label), end='\r')
+                        # print(offset, input_, label)
+                    return input_ad
+            else:
+                _transform = lambda input_, label: input_
+        else:
+            _transform = lambda input_, label: input_
+            # raise KeyError(self.mode)
+
+        if self.mode == 'unlabeled':
+            def preprocessed_transform(input_):
+                input_ = input_.dic
+                input_ = _transform(input_)
+                return input_
+        else:
+            def preprocessed_transform(input_, label):
+                input_ = input_.dic
+                input_ = _transform(input_, label)
+                return input_ # {key: val.cuda() for key, val in input_.items()}
+
+        self.transform = preprocessed_transform
+
     def __getitem__(self, index):
         if self.mode=='labeled':
             input_, label, prob = self.inputs[index], self.labels[index], self.probability[index]
-            input1 = self.transform(input_) 
-            input2 = self.transform(input_) 
+            input1 = self.transform(input_, label) 
+            input2 = self.transform(input_, label) 
             return input1, input2, label, prob            
         elif self.mode=='unlabeled':
             input_ = self.inputs[index]
@@ -185,22 +183,23 @@ class WeakSupDataset(Dataset):
             return input1, input2
         elif self.mode=='weak':
             input_, label = self.inputs[index], self.labels[index]
+            input_ = self.transform(input_, label)
             return input_, label, index        
         elif self.mode=='test':
             input_, label = self.inputs[index], self.labels[index]
+            input_ = self.transform(input_, label)
             return input_, label
            
     def __len__(self):
         return len(self.inputs)
         
 
-from .perturbation import SeedWordPerturbator
-class weak_sup_dataloader():  
-    def __init__(self, dataset, batch_size, num_workers, data_dir, log=None, config=None):
+class WeakSupDataloader:  
+    def __init__(self, dataset, data_dir, batch_size, num_workers, log=None, config=None):
         self.dataset = dataset
+        self.data_dir = data_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.data_dir = data_dir
         self.log = log
         self.config = config
 
